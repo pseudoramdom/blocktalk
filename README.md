@@ -125,6 +125,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+#### Block Template Retrieval
+```rust
+    let local = LocalSet::new();
+    local.run_until(async {
+        let blocktalk = BlockTalk::init("/path/to/node.sock").await?;
+
+        let block_template_interface = blocktalk.block_template();
+        let template = block_template_interface.get_block_template().await?;
+    }).await;
+```
+
 ### Try Out Examples
 
 ```bash 

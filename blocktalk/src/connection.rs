@@ -7,6 +7,7 @@ use crate::chain_capnp::chain::Client as ChainClient;
 use crate::init_capnp::init::Client as InitClient;
 use crate::proxy_capnp::thread::Client as ThreadClient;
 use crate::BlockTalkError;
+use crate::mining_capnp::block_template::Client as BlockTemplateClient;
 
 #[async_trait::async_trait(?Send)]
 pub trait ConnectionProvider: Send + Sync {
@@ -132,6 +133,7 @@ pub struct Connection {
     disconnector: capnp_rpc::Disconnector<twoparty::VatId>,
     thread: ThreadClient,
     chain_client: ChainClient,
+    block_template_client: BlockTemplateClient
 }
 
 impl Connection {
@@ -147,12 +149,37 @@ impl Connection {
 
         let (thread, chain_client) = provider.create_clients(&init_interface).await?;
 
+        // Set up block template client with thread context
+        let mut mk_mining_req = init_interface.make_mining_request();
+        {
+            let mut context = mk_mining_req.get().get_context()?;
+            context.set_thread(thread.clone());
+        }
+        let response = mk_mining_req.send().promise.await?;
+
+        let mining_client = response.get()?.get_result()?;
+        log::debug!("Mining client established");
+
+        // Now create a new block to get the block template client
+        let mut create_block_req = mining_client.create_new_block_request();
+        {
+            // Set up the options for creating a new block
+            let mut options = create_block_req.get().init_options();
+            options.set_use_mempool(true);
+            options.set_block_reserved_weight(4000);
+        }
+        let response = create_block_req.send().promise.await?;
+
+        let block_template_client = response.get()?.get_result()?;
+        log::debug!("Block template client established");
+
         log::info!("Connection to node established successfully");
         Ok(Arc::new(Self {
             rpc_handle,
             disconnector,
             thread,
             chain_client,
+            block_template_client
         }))
     }
 
@@ -188,6 +215,12 @@ impl Connection {
         &self.chain_client
     }
 
+    /// Get the mining client
+    pub fn block_template_client(&self) -> BlockTemplateClient {
+        self.block_template_client.clone()
+    }
+
+    /// Get a reference to the thread client
     pub fn thread(&self) -> &ThreadClient {
         &self.thread
     }
